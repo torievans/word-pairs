@@ -8,7 +8,7 @@ from wordfreq import zipf_frequency
 # =========================================================
 # CONFIG
 # =========================================================
-st.set_page_config(page_title="Verbal Reasoning Bridge Checker", layout="wide")
+st.set_page_config(page_title="Word Pairs Checker", layout="wide")
 
 ALPHABET = string.ascii_lowercase
 
@@ -264,7 +264,7 @@ def dataframe_to_csv_download(df: pd.DataFrame) -> bytes:
 # =========================================================
 # UI
 # =========================================================
-st.title("Verbal Reasoning Bridge Checker")
+st.title("Word Pairs Checker")
 st.write(
     "Check whether a letter or group of letters can end one word and begin the next, "
     "and flag questions with multiple possible answers."

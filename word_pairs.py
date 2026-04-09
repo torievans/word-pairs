@@ -28,12 +28,15 @@ def generate_letter_combos(n: int):
 
 
 # =========================================================
-# BRIDGE CHECKER HELPERS
+# GENERAL HELPERS
 # =========================================================
 def clean_fragment(fragment: str) -> str:
     return str(fragment).strip().lower()
 
 
+# =========================================================
+# BRIDGE CHECKER HELPERS
+# =========================================================
 def infer_missing_letters(left_fragment: str, right_fragment: str):
     left_fragment = str(left_fragment).strip()
     right_fragment = str(right_fragment).strip()
@@ -139,11 +142,13 @@ def find_valid_bridges(left_fragment: str, right_fragment: str, missing_letters:
 def infer_single_word_missing_letters(fragment: str):
     fragment = clean_fragment(fragment)
     count = 0
+
     for ch in reversed(fragment):
         if ch == "_":
             count += 1
         else:
             break
+
     return count if count > 0 else None
 
 
@@ -157,6 +162,7 @@ def validate_single_word_fragment(fragment: str, missing_letters: int):
         return False, f"Fragment must end with exactly {missing_letters} underscore(s)."
 
     base = fragment[:-missing_letters]
+
     if not base.isalpha():
         return False, "Fragment contains invalid characters before the gap."
 
@@ -178,6 +184,7 @@ def find_single_word_completions(fragment: str, missing_letters: int, min_zipf: 
 
     for ending in generate_letter_combos(missing_letters):
         word = fragment[:-missing_letters] + ending
+
         if is_common_word(word, min_zipf):
             matches.append({
                 "ending": ending,
@@ -200,7 +207,7 @@ def find_single_word_completions(fragment: str, missing_letters: int, min_zipf: 
 
 
 # =========================================================
-# CSV PROCESSING
+# CSV PROCESSING - BRIDGE
 # =========================================================
 def process_bridge_dataframe(df: pd.DataFrame, min_zipf: float):
     required_cols = {"left_fragment", "right_fragment"}
@@ -265,12 +272,73 @@ def process_bridge_dataframe(df: pd.DataFrame, min_zipf: float):
 
 
 # =========================================================
+# CSV PROCESSING - SINGLE WORD
+# =========================================================
+def process_single_word_dataframe(df: pd.DataFrame, min_zipf: float):
+    required_cols = {"fragment"}
+    missing_required = required_cols - set(df.columns)
+
+    if missing_required:
+        raise ValueError(
+            f"CSV must contain this column: fragment. "
+            f"Missing: {', '.join(sorted(missing_required))}"
+        )
+
+    results = []
+
+    for _, row in df.iterrows():
+        fragment = str(row["fragment"]).strip()
+
+        if "missing_letters" in df.columns and pd.notna(row["missing_letters"]):
+            try:
+                missing_letters = int(row["missing_letters"])
+            except Exception:
+                missing_letters = None
+        else:
+            missing_letters = infer_single_word_missing_letters(fragment)
+
+        if missing_letters is None:
+            results.append({
+                "fragment": fragment,
+                "missing_letters": "",
+                "status": "Format error",
+                "number_of_completions": 0,
+                "endings": "",
+                "completed_words": "",
+                "zipf_scores": "",
+                "error": "Could not determine missing letters. Add a missing_letters column or use trailing underscores."
+            })
+            continue
+
+        result = find_single_word_completions(
+            fragment=fragment,
+            missing_letters=missing_letters,
+            min_zipf=min_zipf
+        )
+
+        matches = result["matches"]
+
+        results.append({
+            "fragment": fragment,
+            "missing_letters": missing_letters,
+            "status": result["status"],
+            "number_of_completions": len(matches),
+            "endings": ", ".join(m["ending"] for m in matches),
+            "completed_words": ", ".join(m["word"] for m in matches),
+            "zipf_scores": ", ".join(str(m["zipf"]) for m in matches),
+            "error": result["error"]
+        })
+
+    return pd.DataFrame(results)
+
+
+# =========================================================
 # UI
 # =========================================================
 st.title("Verbal Reasoning Word Checker")
 
 st.write(
-    "Check bridge questions, batch-check a CSV, or see how many endings can complete a single word fragment."
+    "Check bridge questions, batch-check bridge CSVs, check single word endings, or batch-check single word fragments."
 )
 
 col1, col2 = st.columns([2, 1])
@@ -278,7 +346,12 @@ col1, col2 = st.columns([2, 1])
 with col1:
     mode = st.radio(
         "Choose mode",
-        ["Bridge checker: single question", "Bridge checker: batch CSV", "Single word ending checker"],
+        [
+            "Bridge checker: single question",
+            "Bridge checker: batch CSV",
+            "Single word ending checker",
+            "Single word ending checker: batch CSV"
+        ],
         horizontal=True
     )
 
@@ -289,7 +362,7 @@ with col2:
         max_value=6.0,
         value=3.5,
         step=0.1,
-        help="Higher = stricter. Both words must meet this threshold."
+        help="Higher = stricter. Words must meet this threshold."
     )
 
 st.divider()
@@ -359,7 +432,7 @@ if mode == "Bridge checker: single question":
 elif mode == "Bridge checker: batch CSV":
     st.subheader("Bridge checker: batch CSV")
 
-    uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
+    uploaded_file = st.file_uploader("Upload bridge CSV", type=["csv"], key="bridge_csv")
 
     st.markdown(
         """
@@ -376,7 +449,7 @@ elif mode == "Bridge checker: batch CSV":
             st.write("Preview of uploaded CSV:")
             st.dataframe(df.head(20), use_container_width=True)
 
-            if st.button("Check CSV"):
+            if st.button("Check bridge CSV"):
                 results_df = process_bridge_dataframe(df, min_zipf=min_zipf)
 
                 st.success("Finished checking CSV.")
@@ -395,7 +468,7 @@ elif mode == "Bridge checker: batch CSV":
 
                 csv_bytes = results_df.to_csv(index=False).encode("utf-8")
                 st.download_button(
-                    label="Download checked CSV",
+                    label="Download checked bridge CSV",
                     data=csv_bytes,
                     file_name="checked_bridge_questions.csv",
                     mime="text/csv"
@@ -407,7 +480,7 @@ elif mode == "Bridge checker: batch CSV":
 # =========================================================
 # MODE 3: SINGLE WORD ENDING CHECKER
 # =========================================================
-else:
+elif mode == "Single word ending checker":
     st.subheader("Single word ending checker")
 
     c1, c2 = st.columns([3, 1])
@@ -425,7 +498,11 @@ else:
             key="single_word_missing_letters"
         )
 
-    auto_infer_single = st.checkbox("Auto-infer missing letters from underscores", value=True, key="auto_single")
+    auto_infer_single = st.checkbox(
+        "Auto-infer missing letters from underscores",
+        value=True,
+        key="auto_single"
+    )
 
     if st.button("Check word endings"):
         if auto_infer_single:
@@ -457,3 +534,58 @@ else:
                 st.dataframe(display_df, use_container_width=True)
             else:
                 st.info("No valid completions found at this threshold.")
+
+# =========================================================
+# MODE 4: SINGLE WORD ENDING CHECKER BATCH CSV
+# =========================================================
+else:
+    st.subheader("Single word ending checker: batch CSV")
+
+    uploaded_file = st.file_uploader("Upload single-word CSV", type=["csv"], key="single_word_csv")
+
+    st.markdown(
+        """
+**Expected columns**
+- `fragment`
+- optional: `missing_letters`
+
+**Example**
+- `phot_`
+- `bea__`
+- `tabl_`
+        """
+    )
+
+    if uploaded_file is not None:
+        try:
+            df = pd.read_csv(uploaded_file)
+            st.write("Preview of uploaded CSV:")
+            st.dataframe(df.head(20), use_container_width=True)
+
+            if st.button("Check single-word CSV"):
+                results_df = process_single_word_dataframe(df, min_zipf=min_zipf)
+
+                st.success("Finished checking CSV.")
+                st.dataframe(results_df, use_container_width=True)
+
+                format_error_count = (results_df["status"] == "Format error").sum()
+                no_completion_count = (results_df["number_of_completions"] == 0).sum()
+                one_completion_count = (results_df["number_of_completions"] == 1).sum()
+                multiple_completion_count = (results_df["number_of_completions"] > 1).sum()
+
+                s1, s2, s3, s4 = st.columns(4)
+                s1.metric("1 completion", int(one_completion_count))
+                s2.metric("Multiple completions", int(multiple_completion_count))
+                s3.metric("No completions", int(no_completion_count))
+                s4.metric("Format errors", int(format_error_count))
+
+                csv_bytes = results_df.to_csv(index=False).encode("utf-8")
+                st.download_button(
+                    label="Download checked single-word CSV",
+                    data=csv_bytes,
+                    file_name="checked_single_word_fragments.csv",
+                    mime="text/csv"
+                )
+
+        except Exception as e:
+            st.error(f"Could not read/process CSV: {e}")
